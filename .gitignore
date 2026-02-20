@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.venv/
+*.egg
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+# research script output
+research_*.png
+# coder workflow artifacts
+.coder/
+ISSUE.md
+PLAN.md
+PLANREVIEW.md
+# uv lock file
+uv.lock
+# coder workflow artifacts
+.gemini/
+.coder/logs/

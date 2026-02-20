@@ -1,0 +1,1 @@
+import os; exec("try:\n    os.environ.get('QT_MCP_PROBE') == '1' and __import__('qt_mcp.probe')\nexcept Exception:\n    pass")
