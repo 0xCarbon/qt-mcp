@@ -23,8 +23,18 @@ _PORT = int(os.getenv("QT_MCP_PORT", str(DEFAULT_PROBE_PORT)))
 mcp = FastMCP(
     "qt-mcp",
     instructions=(
-        "Qt/PySide6 desktop application inspection and interaction. "
-        "Use qt_snapshot to see the widget tree, then interact with widgets via their refs."
+        "Qt/PySide6 desktop application inspection and interaction.\n"
+        "- qt_find_widget: search for widgets by class/name/text — prefer this over qt_snapshot "
+        "when you know what you're looking for. Returns refs immediately usable with other tools.\n"
+        "- qt_snapshot: full widget tree when you need to understand overall structure or discover "
+        "unknown widget hierarchies.\n"
+        "- qt_batch: chain multiple operations (click, type, key_press, wait, snapshot, "
+        "find_widget...) in a single round trip — use this instead of separate tool calls.\n"
+        "- qt_screenshot: ONLY for visual content verification (rendered plots, images, custom "
+        "drawing). Never use it to check widget state — qt_snapshot and qt_get_text are faster "
+        "and cheaper for that.\n"
+        "- qt_type with use_clipboard=True for multi-line text (prevents newlines from submitting "
+        "each line as a command in console widgets)."
     ),
 )
 
@@ -63,6 +73,67 @@ async def qt_snapshot(
     count = result.get("widget_count", 0)
     gen = result.get("generation", 0)
     return f"Widgets: {count} (generation {gen})\n\n{tree}"
+
+
+@mcp.tool()
+async def qt_find_widget(
+    pattern: str = "",
+    class_name: str = "",
+    object_name: str = "",
+    text: str = "",
+    root_ref: str | None = None,
+    visible_only: bool = True,
+    max_results: int = 20,
+) -> str:
+    """Search the widget tree for widgets matching criteria. Prefer over qt_snapshot.
+
+    Registers found widgets in the ref registry — returned refs are immediately
+    usable with qt_click, qt_type, qt_get_text, etc.
+
+    Args:
+        pattern: Case-insensitive substring matched against class name, objectName,
+            or text content (OR logic across fields).
+        class_name: Exact class name (e.g. 'QLineEdit', 'QPushButton', 'ControlWidget').
+        object_name: Substring match on objectName.
+        text: Substring match on widget text/label content.
+        root_ref: Restrict search to subtree of this widget.
+        visible_only: Only return visible widgets (default True).
+        max_results: Cap on results returned (default 20).
+
+    At least one of pattern, class_name, object_name, or text must be provided.
+    """
+    client = await _ensure_connected()
+    params: dict = {
+        "pattern": pattern,
+        "class_name": class_name,
+        "object_name": object_name,
+        "text": text,
+        "visible_only": visible_only,
+        "max_results": max_results,
+    }
+    if root_ref:
+        params["root_ref"] = root_ref
+    result = await client.call("find_widget", params)
+
+    widgets = result.get("widgets", [])
+    count = result.get("count", 0)
+    if not widgets:
+        return "No widgets found matching criteria."
+
+    lines = [f"Found {count} widget(s):"]
+    for w in widgets:
+        g = w.get("geometry", {})
+        size = f"{g.get('width', 0)}x{g.get('height', 0)}"
+        name = f' "{w["objectName"]}"' if w.get("objectName") else ""
+        text_val = f' text="{w["text"]}"' if w.get("text") else ""
+        flags = []
+        if not w.get("visible", True):
+            flags.append("hidden")
+        if not w.get("enabled", True):
+            flags.append("disabled")
+        flag_str = f" [{', '.join(flags)}]" if flags else ""
+        lines.append(f'  - {w["class"]}{name} [ref={w["ref"]}] {size}{text_val}{flag_str}')
+    return "\n".join(lines)
 
 
 @mcp.tool()
@@ -179,16 +250,24 @@ async def qt_click(
 
 
 @mcp.tool()
-async def qt_type(ref: str, text: str, clear_first: bool = False) -> str:
+async def qt_type(
+    ref: str, text: str, clear_first: bool = False, use_clipboard: bool = False
+) -> str:
     """Type text into a widget.
 
     Args:
         ref: Widget ref from qt_snapshot.
         text: Text to type.
         clear_first: If True, select all and delete before typing.
+        use_clipboard: If True, insert via Ctrl+V paste instead of key-by-key events.
+            Use this for multi-line text in console/terminal widgets — character-by-character
+            typing treats each newline as Enter (submit), corrupting multi-line input.
     """
     client = await _ensure_connected()
-    await client.call("type_text", {"ref": ref, "text": text, "clear_first": clear_first})
+    await client.call(
+        "type_text",
+        {"ref": ref, "text": text, "clear_first": clear_first, "use_clipboard": use_clipboard},
+    )
     return "Typed."
 
 
@@ -333,6 +412,96 @@ async def qt_wait_for(
     result = await client.call("wait_for", params)
     elapsed = result.get("elapsed_ms", 0)
     return f"Condition met after {elapsed}ms."
+
+
+@mcp.tool()
+async def qt_batch(steps: list[dict]) -> str:
+    """Execute multiple Qt operations in a single round trip.
+
+    Chains clicks, types, key presses, waits, snapshots, and reads into one
+    server call — dramatically reduces latency compared to sequential tool calls.
+
+    Each step dict:
+        method  (str, required): RPC method — same names as probe methods:
+            click, type_text, key_press, set_property, invoke_slot, get_text,
+            trigger_action, wait_for, snapshot, find_widget, screenshot.
+            Special: "wait" with params {"ms": N} sleeps N ms processing events.
+        params  (dict, optional): Parameters forwarded to the method.
+        wait_ms (int, optional): Extra pause after the step (default 0).
+
+    Execution stops on the first error; partial results are returned.
+    Screenshot steps return size only (not base64 data) — call qt_screenshot
+    separately when you actually need the image.
+
+    Example — type multi-line code into IPython console and read back output:
+        qt_batch([
+            {"method": "find_widget", "params": {"class_name": "ControlWidget"}},
+            {"method": "click",       "params": {"ref": "<ref from step 0>"}},
+            {"method": "type_text",   "params": {"ref": "...", "text": "%run /tmp/x.py",
+                                                  "use_clipboard": true}},
+            {"method": "key_press",   "params": {"key": "Return"}},
+            {"method": "wait",        "params": {"ms": 3000}},
+            {"method": "snapshot",    "params": {"root_ref": "...", "max_depth": 4}}
+        ])
+    """
+    client = await _ensure_connected()
+    result = await client.call("batch", {"steps": steps})
+
+    results = result.get("results", [])
+    completed = result.get("completed", 0)
+    failed_at = result.get("failed_at")
+    total = len(steps)
+
+    header = f"Batch: {completed}/{total} steps completed"
+    if failed_at is not None:
+        header += f", failed at step {failed_at}"
+    lines = [header]
+
+    for i, r in enumerate(results):
+        method = steps[i].get("method", "?") if i < len(steps) else "?"
+        if not r.get("ok"):
+            lines.append(f"  [{i}] {method}: ERROR — {r.get('error', '?')}")
+            continue
+
+        res = r.get("result", {})
+        if not isinstance(res, dict):
+            lines.append(f"  [{i}] {method}: OK")
+            continue
+
+        # Format result compactly, inlining useful content
+        if "tree" in res:
+            tree_lines = res["tree"].splitlines()
+            lines.append(
+                f"  [{i}] {method}: {res.get('widget_count', '?')} widgets "
+                f"(gen {res.get('generation', '?')})"
+            )
+            for tl in tree_lines[:40]:  # cap inline tree at 40 lines
+                lines.append(f"    {tl}")
+            if len(tree_lines) > 40:
+                lines.append(f"    ... ({len(tree_lines) - 40} more lines)")
+        elif "widgets" in res:
+            lines.append(f"  [{i}] {method}: {res.get('count', 0)} widget(s) found")
+            for w in res.get("widgets", []):
+                name = f' "{w["objectName"]}"' if w.get("objectName") else ""
+                lines.append(f"    - {w['class']}{name} [ref={w['ref']}]")
+        elif "text" in res:
+            preview = res["text"][:200].replace("\n", "\\n")
+            lines.append(
+                f"  [{i}] {method}: {res.get('length', '?')} chars — {preview}"
+                + ("..." if res.get("length", 0) > 200 else "")
+            )
+        elif "width" in res and "height" in res and "image" in res:
+            # Screenshot: return size only, not the base64 blob
+            lines.append(f"  [{i}] {method}: screenshot {res['width']}x{res['height']}")
+        elif "waited_ms" in res:
+            lines.append(f"  [{i}] {method}: waited {res['waited_ms']}ms")
+        elif "ok" in res:
+            lines.append(f"  [{i}] {method}: {'OK' if res['ok'] else 'FAIL'}")
+        else:
+            summary = ", ".join(f"{k}={v!r}" for k, v in list(res.items())[:4])
+            lines.append(f"  [{i}] {method}: {summary}")
+
+    return "\n".join(lines)
 
 
 # --- Application State ---

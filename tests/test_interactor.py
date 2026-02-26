@@ -41,6 +41,40 @@ def test_type_text(qapp, sample_window, introspector, interactor):
     assert edit.text() == "hello world"
 
 
+def test_type_text_use_clipboard_line_edit(qapp, sample_window, introspector, interactor):
+    edit_ref = _snapshot_and_find_ref(introspector, "SearchField")
+    edit = sample_window.findChild(QLineEdit, "SearchField")
+
+    interactor.type_text(edit_ref, "clipboard text", use_clipboard=True)
+    assert edit.text() == "clipboard text"
+
+
+def test_type_text_use_clipboard_multiline_text_edit(qapp, sample_window, introspector, interactor):
+    from PySide6.QtWidgets import QTextEdit as _QTE
+
+    text_edit = sample_window.findChild(_QTE, "NotesField")
+    if text_edit is None:
+        pytest.skip("NotesField not in sample_app")
+
+    edit_ref = _snapshot_and_find_ref(introspector, "NotesField")
+    multiline = "line one\nline two\nline three"
+    interactor.type_text(edit_ref, multiline, use_clipboard=True)
+    assert text_edit.toPlainText() == multiline
+
+
+def test_type_text_clipboard_restores_previous(qapp, sample_window, introspector, interactor):
+    """Clipboard content before the call should be restored after."""
+    from PySide6.QtWidgets import QApplication as _QApp
+
+    clipboard = _QApp.clipboard()
+    clipboard.setText("sentinel")
+
+    edit_ref = _snapshot_and_find_ref(introspector, "SearchField")
+    interactor.type_text(edit_ref, "new content", use_clipboard=True)
+
+    assert clipboard.text() == "sentinel"
+
+
 def test_type_text_clear_first(qapp, sample_window, introspector, interactor):
     edit_ref = _snapshot_and_find_ref(introspector, "SearchField")
     edit = sample_window.findChild(QLineEdit, "SearchField")
