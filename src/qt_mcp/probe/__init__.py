@@ -24,6 +24,7 @@ from qt_mcp.probe.thread_inspector import ThreadInspector
 from qt_mcp.probe.vtk_inspector import VtkInspector
 
 QObject = QtCore.QObject
+QThread = QtCore.QThread
 QApplication = QtWidgets.QApplication
 
 DEFAULT_PORT = 9142
@@ -142,7 +143,55 @@ class Probe(QObject):
             return self._api_inspector.signals(**params)
         if method == "layout_check":
             return self._layout_inspector.layout_check()
+        if method == "find_widget":
+            return self._introspector.find_widget(**params)
+        if method == "batch":
+            return self._batch(**params)
         raise ValueError(f"Unknown method: {method}")
+
+    def _batch(self, steps: list) -> dict:
+        """Execute multiple RPC methods sequentially in one round trip."""
+        results = []
+        for i, step in enumerate(steps):
+            method = step.get("method")
+            params = step.get("params") or {}
+            wait_ms = step.get("wait_ms", 0)
+
+            if not method:
+                results.append({"ok": False, "error": "Missing 'method' in step"})
+                return {"results": results, "completed": i, "failed_at": i}
+
+            if method == "batch":
+                results.append({"ok": False, "error": "Nested batch not allowed"})
+                return {"results": results, "completed": i, "failed_at": i}
+
+            try:
+                if method == "wait":
+                    ms = int(params.get("ms", 0))
+                    _process_events_for(ms)
+                    results.append({"ok": True, "result": {"waited_ms": ms}})
+                else:
+                    results.append({"ok": True, "result": self._dispatch(method, params)})
+            except Exception as exc:
+                results.append({"ok": False, "error": str(exc)})
+                return {"results": results, "completed": i, "failed_at": i}
+
+            if wait_ms > 0:
+                _process_events_for(int(wait_ms))
+
+        return {"results": results, "completed": len(steps), "failed_at": None}
+
+
+def _process_events_for(ms: int) -> None:
+    """Process Qt events for the given number of milliseconds."""
+    app = QApplication.instance()
+    deadline = time.monotonic() + ms / 1000.0
+    while time.monotonic() < deadline:
+        if app:
+            app.processEvents()
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            QThread.msleep(min(50, max(1, int(remaining * 1000))))
 
 
 def install(port: int = DEFAULT_PORT) -> Probe | None:

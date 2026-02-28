@@ -270,3 +270,82 @@ def test_snapshot_shows_tab_labels(qapp, sample_window, introspector):
     result = introspector.snapshot()
     tree = result["tree"]
     assert "[tabs: *Editor | Console | Help]" in tree
+
+
+# --- find_widget tests ---
+
+
+def test_find_widget_by_class_name(qapp, sample_window, introspector):
+    result = introspector.find_widget(class_name="QPushButton")
+    assert result["count"] > 0
+    for w in result["widgets"]:
+        assert w["class"] == "QPushButton"
+    # Returned refs are usable
+    assert all(w["ref"].startswith("w") for w in result["widgets"])
+
+
+def test_find_widget_by_object_name(qapp, sample_window, introspector):
+    result = introspector.find_widget(object_name="IncrementButton")
+    assert result["count"] >= 1
+    assert any(w["objectName"] == "IncrementButton" for w in result["widgets"])
+
+
+def test_find_widget_by_text(qapp, sample_window, introspector):
+    result = introspector.find_widget(text="Count: 0")
+    assert result["count"] >= 1
+    assert any("Count: 0" in (w["text"] or "") for w in result["widgets"])
+
+
+def test_find_widget_by_pattern(qapp, sample_window, introspector):
+    # 'Increment' appears in objectName of the button
+    result = introspector.find_widget(pattern="Increment")
+    assert result["count"] >= 1
+
+
+def test_find_widget_max_results(qapp, sample_window, introspector):
+    result = introspector.find_widget(class_name="QWidget", max_results=3)
+    assert result["count"] <= 3
+
+
+def test_find_widget_no_criteria_raises(qapp, sample_window, introspector):
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="At least one"):
+        introspector.find_widget()
+
+
+def test_find_widget_with_root_ref(qapp, sample_window, introspector):
+    # First get a top-level ref via snapshot
+    snap = introspector.snapshot()
+    tree = snap["tree"]
+    import re
+
+    # Find root window ref — format is: - QMainWindow "MainWindow" [ref=wN] ...
+    m = re.search(r'- Q?MainWindow\b.*\[ref=(w\d+)\]', tree)
+    assert m, "MainWindow not in snapshot"
+    root_ref = m.group(1)
+
+    result = introspector.find_widget(class_name="QPushButton", root_ref=root_ref)
+    assert result["count"] > 0
+
+
+def test_find_widget_returns_geometry(qapp, sample_window, introspector):
+    result = introspector.find_widget(object_name="IncrementButton")
+    assert result["count"] >= 1
+    w = result["widgets"][0]
+    g = w["geometry"]
+    assert g["width"] > 0 and g["height"] > 0
+
+
+def test_find_widget_refs_usable_for_interaction(qapp, sample_window, introspector, interactor):
+    from PySide6.QtWidgets import QLabel
+
+    label = sample_window.findChild(QLabel, "CounterLabel")
+    assert label.text() == "Count: 0"
+
+    result = introspector.find_widget(object_name="IncrementButton")
+    assert result["count"] >= 1
+    ref = result["widgets"][0]["ref"]
+
+    interactor.click(ref)
+    assert label.text() == "Count: 1"

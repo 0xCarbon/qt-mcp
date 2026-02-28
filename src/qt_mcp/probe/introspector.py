@@ -226,6 +226,109 @@ class Introspector:
 
         return result
 
+    def find_widget(
+        self,
+        pattern: str = "",
+        class_name: str = "",
+        object_name: str = "",
+        text: str = "",
+        root_ref: str | None = None,
+        visible_only: bool = True,
+        max_results: int = 20,
+    ) -> dict:
+        """Search the widget tree for widgets matching criteria.
+
+        At least one of pattern, class_name, object_name, or text must be set.
+        Returns refs registered in the current registry (no clear performed).
+
+        Filter semantics:
+            class_name  — exact match on ``type(widget).__name__`` (case-insensitive).
+                          Use the full class name, e.g. "QPushButton" or "ControlWidget".
+            object_name — case-insensitive substring match on ``widget.objectName()``.
+            text        — case-insensitive substring match on widget text/label content.
+            pattern     — case-insensitive substring matched against class name, objectName,
+                          OR text (OR logic across fields; AND with other explicit filters).
+        """
+        if not (pattern or class_name or object_name or text):
+            raise ValueError("At least one of pattern, class_name, object_name, or text required")
+
+        app = QApplication.instance()
+        if app is None:
+            return {"widgets": [], "count": 0}
+
+        if root_ref:
+            root = self._registry.resolve_or_raise(root_ref)
+            if not isinstance(root, QWidget):
+                raise ValueError(f"Ref {root_ref} is not a QWidget")
+            search_roots: list[QWidget] = [root]
+        elif visible_only:
+            search_roots = _visible_top_level_widgets(app)
+        else:
+            search_roots = list(app.topLevelWidgets())
+
+        pattern_lower = pattern.lower()
+        class_lower = class_name.lower()
+        object_lower = object_name.lower()
+        text_lower = text.lower()
+
+        matches: list[dict] = []
+
+        def _walk(widget: QWidget) -> None:
+            if len(matches) >= max_results:
+                return
+            if visible_only and not widget.isVisible():
+                return
+
+            w_class = type(widget).__name__
+            w_name = widget.objectName()
+            w_text = _safe_text(widget) or ""
+
+            # All explicit filters must match (AND logic)
+            ok = True
+            if class_name and w_class.lower() != class_lower:
+                ok = False
+            if ok and object_name and object_lower not in w_name.lower():
+                ok = False
+            if ok and text and text_lower not in w_text.lower():
+                ok = False
+            if ok and pattern and not (
+                pattern_lower in w_class.lower()
+                or pattern_lower in w_name.lower()
+                or pattern_lower in w_text.lower()
+            ):
+                ok = False
+
+            if ok:
+                ref = self._registry.register(widget, prefix="w")
+                g = widget.geometry()
+                matches.append(
+                    {
+                        "ref": ref,
+                        "class": w_class,
+                        "objectName": w_name,
+                        "text": w_text or None,
+                        "geometry": {
+                            "x": g.x(),
+                            "y": g.y(),
+                            "width": g.width(),
+                            "height": g.height(),
+                        },
+                        "visible": widget.isVisible(),
+                        "enabled": widget.isEnabled(),
+                    }
+                )
+
+            for child in widget.children():
+                if isinstance(child, QWidget) and len(matches) < max_results:
+                    _walk(child)
+
+        for root in search_roots:
+            _walk(root)
+            if len(matches) >= max_results:
+                break
+
+        return {"widgets": matches, "count": len(matches)}
+
     def list_windows(self, skip_hidden: bool = True) -> dict:
         """List all top-level windows."""
         app = QApplication.instance()

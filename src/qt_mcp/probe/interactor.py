@@ -158,14 +158,24 @@ class Interactor:
 
         return {"ok": True}
 
-    def type_text(self, ref: str, text: str, clear_first: bool = False) -> dict:
-        """Type text into a widget by sending key events."""
+    def type_text(
+        self, ref: str, text: str, clear_first: bool = False, use_clipboard: bool = False
+    ) -> dict:
+        """Type text into a widget by sending key events or via clipboard paste.
+
+        Args:
+            ref: Widget ref.
+            text: Text to insert.
+            clear_first: Select-all + delete before inserting.
+            use_clipboard: Paste via Ctrl+V instead of character-by-character key events.
+                Use this for multi-line text to prevent each newline from acting as
+                a submit (e.g. in IPython/terminal widgets).
+        """
         widget = self._resolve_widget(ref)
         widget.setFocus()
         QApplication.processEvents()
 
         if clear_first:
-            # Select all then delete
             ctrl = Qt.KeyboardModifier.ControlModifier
             no_mod = Qt.KeyboardModifier.NoModifier
             select_all = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_A, ctrl, "")
@@ -174,11 +184,27 @@ class Interactor:
             QApplication.sendEvent(widget, delete)
             QApplication.processEvents()
 
-        for char in text:
-            key_press = QKeyEvent(QEvent.Type.KeyPress, 0, Qt.KeyboardModifier.NoModifier, char)
-            key_release = QKeyEvent(QEvent.Type.KeyRelease, 0, Qt.KeyboardModifier.NoModifier, char)
-            QApplication.sendEvent(widget, key_press)
-            QApplication.sendEvent(widget, key_release)
+        if use_clipboard:
+            clipboard = QApplication.clipboard()
+            previous = clipboard.text()
+            try:
+                clipboard.setText(text)
+                ctrl = Qt.KeyboardModifier.ControlModifier
+                paste = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_V, ctrl, "")
+                paste_rel = QKeyEvent(QEvent.Type.KeyRelease, Qt.Key.Key_V, ctrl, "")
+                QApplication.sendEvent(widget, paste)
+                QApplication.sendEvent(widget, paste_rel)
+                QApplication.processEvents()
+            finally:
+                clipboard.setText(previous)  # always restore previous clipboard content
+        else:
+            for char in text:
+                key_press = QKeyEvent(QEvent.Type.KeyPress, 0, Qt.KeyboardModifier.NoModifier, char)
+                key_release = QKeyEvent(
+                    QEvent.Type.KeyRelease, 0, Qt.KeyboardModifier.NoModifier, char
+                )
+                QApplication.sendEvent(widget, key_press)
+                QApplication.sendEvent(widget, key_release)
 
         QApplication.processEvents()
         return {"ok": True}
