@@ -93,7 +93,8 @@ async def qt_find_widget(
     Args:
         pattern: Case-insensitive substring matched against class name, objectName,
             or text content (OR logic across fields).
-        class_name: Exact class name (e.g. 'QLineEdit', 'QPushButton', 'ControlWidget').
+        class_name: Exact class name, case-insensitive (e.g. 'QLineEdit', 'QPushButton',
+            'ControlWidget'). Must match the full class name, not a substring.
         object_name: Substring match on objectName.
         text: Substring match on widget text/label content.
         root_ref: Restrict search to subtree of this widget.
@@ -433,15 +434,24 @@ async def qt_batch(steps: list[dict]) -> str:
     Screenshot steps return size only (not base64 data) — call qt_screenshot
     separately when you actually need the image.
 
-    Example — type multi-line code into IPython console and read back output:
+    Note: refs must be known before calling qt_batch — steps cannot reference
+    results from earlier steps within the same batch. Use qt_find_widget first
+    to obtain refs, then pass them into the batch call.
+
+    Example — click a button twice then read a label in one round trip:
         qt_batch([
-            {"method": "find_widget", "params": {"class_name": "ControlWidget"}},
-            {"method": "click",       "params": {"ref": "<ref from step 0>"}},
-            {"method": "type_text",   "params": {"ref": "...", "text": "%run /tmp/x.py",
-                                                  "use_clipboard": true}},
-            {"method": "key_press",   "params": {"key": "Return"}},
-            {"method": "wait",        "params": {"ms": 3000}},
-            {"method": "snapshot",    "params": {"root_ref": "...", "max_depth": 4}}
+            {"method": "click",    "params": {"ref": "w5"}},
+            {"method": "click",    "params": {"ref": "w5"}},
+            {"method": "get_text", "params": {"ref": "w12"}},
+        ])
+
+    Example — type multi-line code into IPython console and wait for output:
+        qt_batch([
+            {"method": "type_text", "params": {"ref": "w42", "text": "%run /tmp/x.py",
+                                               "use_clipboard": true}},
+            {"method": "key_press", "params": {"key": "Return"}},
+            {"method": "wait",      "params": {"ms": 3000}},
+            {"method": "snapshot",  "params": {"max_depth": 4}},
         ])
     """
     client = await _ensure_connected()

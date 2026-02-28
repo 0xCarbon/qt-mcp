@@ -12,8 +12,6 @@ import collections
 import time
 
 from qt_mcp.probe._qt_compat import QtCore, QtWidgets
-
-QThread = QtCore.QThread
 from qt_mcp.probe.api_inspector import ApiInspector
 from qt_mcp.probe.interactor import Interactor
 from qt_mcp.probe.introspector import Introspector
@@ -26,6 +24,7 @@ from qt_mcp.probe.thread_inspector import ThreadInspector
 from qt_mcp.probe.vtk_inspector import VtkInspector
 
 QObject = QtCore.QObject
+QThread = QtCore.QThread
 QApplication = QtWidgets.QApplication
 
 DEFAULT_PORT = 9142

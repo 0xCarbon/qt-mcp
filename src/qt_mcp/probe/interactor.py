@@ -187,14 +187,16 @@ class Interactor:
         if use_clipboard:
             clipboard = QApplication.clipboard()
             previous = clipboard.text()
-            clipboard.setText(text)
-            ctrl = Qt.KeyboardModifier.ControlModifier
-            paste = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_V, ctrl, "")
-            paste_rel = QKeyEvent(QEvent.Type.KeyRelease, Qt.Key.Key_V, ctrl, "")
-            QApplication.sendEvent(widget, paste)
-            QApplication.sendEvent(widget, paste_rel)
-            QApplication.processEvents()
-            clipboard.setText(previous)  # restore previous clipboard content
+            try:
+                clipboard.setText(text)
+                ctrl = Qt.KeyboardModifier.ControlModifier
+                paste = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_V, ctrl, "")
+                paste_rel = QKeyEvent(QEvent.Type.KeyRelease, Qt.Key.Key_V, ctrl, "")
+                QApplication.sendEvent(widget, paste)
+                QApplication.sendEvent(widget, paste_rel)
+                QApplication.processEvents()
+            finally:
+                clipboard.setText(previous)  # always restore previous clipboard content
         else:
             for char in text:
                 key_press = QKeyEvent(QEvent.Type.KeyPress, 0, Qt.KeyboardModifier.NoModifier, char)

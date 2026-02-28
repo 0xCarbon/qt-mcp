@@ -240,6 +240,14 @@ class Introspector:
 
         At least one of pattern, class_name, object_name, or text must be set.
         Returns refs registered in the current registry (no clear performed).
+
+        Filter semantics:
+            class_name  — exact match on ``type(widget).__name__`` (case-insensitive).
+                          Use the full class name, e.g. "QPushButton" or "ControlWidget".
+            object_name — case-insensitive substring match on ``widget.objectName()``.
+            text        — case-insensitive substring match on widget text/label content.
+            pattern     — case-insensitive substring matched against class name, objectName,
+                          OR text (OR logic across fields; AND with other explicit filters).
         """
         if not (pattern or class_name or object_name or text):
             raise ValueError("At least one of pattern, class_name, object_name, or text required")
