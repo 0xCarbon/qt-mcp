@@ -13,7 +13,7 @@ permissions:
 jobs:
   gitleaks:
     name: Gitleaks
-    runs-on: arc-runner-set-0xcarbon
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,7 +22,7 @@ jobs:
 
   pip-audit:
     name: pip-audit
-    runs-on: arc-runner-set-0xcarbon
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
